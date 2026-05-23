@@ -1,0 +1,13 @@
+{
+  "name": "anki-nvim-llm",
+  "package": "anki-nvim-llm",
+  "ankiweb_id": "",
+  "author": "",
+  "description": "Send the current review card to a gp.nvim chat in Neovim (Ctrl+G).",
+  "homepage": "",
+  "tags": "",
+  "min_point_version": 231000,
+  "max_point_version": null,
+  "branch_index": 0,
+  "conflicts": []
+}

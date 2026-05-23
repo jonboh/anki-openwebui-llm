@@ -1,0 +1,8 @@
+{
+  "nvim_socket": "",
+  "terminal": "",
+  "editor": "",
+  "gp_chat_dir": "",
+  "agent": "AnkiClaude-Sonnet",
+  "system_prompt": "You are a knowledgeable tutor helping a student understand the Anki card shown below."
+}
