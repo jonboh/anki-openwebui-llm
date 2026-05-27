@@ -71,7 +71,7 @@ def _addon_socket() -> str:
     s = _config().get("nvim_socket", "")
     if s:
         return os.path.expanduser(s)
-    state_dir = os.path.expanduser("~/.local/share/anki-nvim-llm")
+    state_dir = os.path.expanduser("~/.local/share/anki-nvim")
     os.makedirs(state_dir, exist_ok=True)
     return os.path.join(state_dir, "nvim.sock")
 
@@ -201,7 +201,7 @@ def _try_remote_open(filepath: str, socket: str) -> bool:
     )
     try:
         result = subprocess.run(
-            [_editor(), "--server", socket, "--remote-send", f":lua {lua}<CR>"],
+            [_editor(), "--server", socket, "--remote-send", f"<C-\\><C-n>:lua {lua}<CR>"],
             timeout=3,
             capture_output=True,
         )
