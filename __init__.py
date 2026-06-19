@@ -74,9 +74,9 @@ def _html_to_markdown(raw: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
 
-    # 2. Line-break tags — consume trailing whitespace so <br>\n doesn't
-    #    produce double blank lines inside code blocks.
-    text = re.sub(r"<br\s*/?>\s*", "\n", text, flags=re.IGNORECASE)
+    # 2. Line-break tags — consume optional trailing newline so <br>\n doesn't
+    #    produce double blank lines, but keep any indentation that follows.
+    text = re.sub(r"<br\s*/?>\r?\n", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?(p|div|li|tr)[^>]*>\s*", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?ul[^>]*>|</?ol[^>]*>\s*", "\n", text, flags=re.IGNORECASE)
 
