@@ -1,26 +1,32 @@
 """
-anki-nvim-llm — Send the current review card to a gp.nvim chat in Neovim.
+anki-openui-llm — Send the current review card to Open WebUI for LLM chat.
 
 Workflow
 --------
-Ctrl+G  — Open the persistent chat for the current card (created on first use,
-           keyed by card ID so it survives card edits). Conversation history is
-           preserved across sessions.
-Ctrl+Shift+G — Force-create a new chat file for the current card, regardless of
-           whether a previous one exists.
+Ctrl+G       — Open the persistent Open WebUI chat for the current card
+               (created on first use, keyed by card ID). Conversation history
+               is preserved in Open WebUI across sessions.
+Ctrl+Shift+G — Always create a fresh Open WebUI chat for the current card.
 
-In both cases:
-- If the dedicated Neovim window is already open (socket alive), the file is
-  sent there and reused.
-- If not, a new terminal window is spawned running the editor with --listen so
-  future cards are sent to the same session.
+On first use, a new persistent chat session is created via the Open WebUI API
+with the card content as the initial message.  Your default browser opens to
+that chat's URL so you can ask follow-ups in Open WebUI's full KaTeX-enabled
+interface.
+
+Requirements
+------------
+- A running Open WebUI instance (default: https://eva-chat.jonboh.dev)
+- An API key with write access to create chat sessions
+  Generate one in Open WebUI Settings → Account → API Keys
 """
 
 import html
+import json
 import os
 import re
-import shutil
-import subprocess
+import urllib.error
+import urllib.request
+import webbrowser
 
 from aqt import gui_hooks, mw
 from aqt.utils import tooltip
@@ -31,11 +37,15 @@ from aqt.utils import tooltip
 # ---------------------------------------------------------------------------
 
 def _html_to_markdown(raw: str) -> str:
-    """Best-effort conversion of Anki card HTML to readable markdown text."""
+    """Best-effort conversion of Anki card HTML to readable markdown text.
+
+    Preserves **bold**, *italic*, `` code ``, fenced code blocks, and
+    line breaks.  Drops unknown tags and unescapes HTML entities.
+    """
     if not raw:
         return ""
 
-    text = re.sub(r"<br\s*/?>", "\n", raw, flags=re.IGNORECASE)
+    text = re.sub(r"<br\s*/>", "\n", raw, flags=re.IGNORECASE)
     text = re.sub(r"</?(p|div|li|tr)[^>]*>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?ul[^>]*>|</?ol[^>]*>", "\n", text, flags=re.IGNORECASE)
 
@@ -61,223 +71,130 @@ def _config() -> dict:
     return mw.addonManager.getConfig(__name__) or {}
 
 
-def _gp_chat_dir() -> str:
-    d = _config().get("gp_chat_dir", "")
-    return os.path.expanduser(d) if d else os.path.expanduser("~/.local/share/nvim/gp/chats")
+def _state_file() -> str:
+    """Path to the JSON file mapping card IDs to Open WebUI chat IDs.
 
-
-def _addon_socket() -> str:
-    """Path to the dedicated socket for the addon-owned Neovim window."""
-    s = _config().get("nvim_socket", "")
-    if s:
-        return os.path.expanduser(s)
-    state_dir = os.path.expanduser("~/.local/share/anki-nvim")
+    Lives under ~/.local/share/anki-openui-llm/ so it survives restarts.
+    """
+    state_dir = os.path.expanduser("~/.local/share/anki-openui-llm")
     os.makedirs(state_dir, exist_ok=True)
-    return os.path.join(state_dir, "nvim.sock")
+    return os.path.join(state_dir, "chats.json")
 
 
-def _editor() -> str:
-    """Return the editor binary from config, defaulting to 'nvim'."""
-    return _config().get("editor", "") or "nvim"
+def _load_state() -> dict:
+    """Load card → {chat_id, title} mapping from disk."""
+    path = _state_file()
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
 
 
-def _terminal() -> str | None:
-    """Return the terminal from config, or auto-detect one."""
-    t = _config().get("terminal", "")
-    if t:
-        return t
+def _save_state(state: dict) -> None:
+    """Persist card → chat mapping to disk."""
+    with open(_state_file(), "w") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
 
-    candidates = [
-        "kitty", "alacritty", "wezterm", "foot",
-        "x-terminal-emulator", "gnome-terminal", "xfce4-terminal",
-        "konsole", "urxvt", "rxvt", "xterm",
-    ]
-    for t in candidates:
-        if shutil.which(t):
-            return t
+
+# ---------------------------------------------------------------------------
+# Open WebUI API
+# ---------------------------------------------------------------------------
+
+def _open_webui_url() -> str:
+    """Base URL of the Open WebUI instance (no trailing slash)."""
+    url = _config().get("open_webui_url", "https://eva-chat.jonboh.dev")
+    return url.rstrip("/")
+
+
+def _api_key() -> str:
+    return _config().get("open_webui_api_key", "")
+
+
+def _api_headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    key = _api_key()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
+def _system_prompt() -> str:
+    return _config().get(
+        "system_prompt",
+        "You are a knowledgeable tutor helping a student understand "
+        "the Anki card shown below. Respond with clear explanations, "
+        "use examples, and render any mathematical expressions in "
+        "LaTeX notation so they display correctly.",
+    )
+
+
+def _create_chat_session(card_content: str) -> str | None:
+    """Create a new persistent chat session on Open WebUI.
+
+    The card content is embedded as the first user message so it's visible
+    in the conversation history.
+
+    Returns the Open WebUI chat *id* on success, *None* on failure.
+    """
+    payload = json.dumps({
+        "chat": {
+            "model": "default",
+            "messages": [
+                {"role": "system", "content": _system_prompt()},
+                {
+                    "role": "user",
+                    "content": (
+                        "Here is an Anki card I'm reviewing. "
+                        "Please help me understand it.\n\n"
+                        f"{card_content}"
+                    ),
+                },
+            ],
+        },
+    }).encode()
+
+    url = f"{_open_webui_url()}/api/v1/chats/new"
+    try:
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers=_api_headers(),
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            return data.get("id")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        tooltip(f"Open WebUI error ({e.code}): {body[:120]}")
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
+        tooltip(f"Could not reach Open WebUI: {e}")
     return None
 
 
-# ---------------------------------------------------------------------------
-# gp.nvim chat-file management
-# ---------------------------------------------------------------------------
+def _get_chat_title(chat_id: str) -> str | None:
+    """Fetch an existing chat's title from Open WebUI.
 
-def _card_chat_paths(card_id: int) -> list[str]:
+    Used when re-opening a previous chat to show the user its topic.
+    Returns None if the chat can't be fetched (may have been deleted).
     """
-    Return all existing chat files for *card_id*, sorted by counter ascending.
-    Files are named anki-<card_id>-<N>.md (N is a positive integer).
-    """
-    chat_dir = _gp_chat_dir()
-    os.makedirs(chat_dir, exist_ok=True)
-    prefix = f"anki-{card_id}-"
-    results = []
-    for name in os.listdir(chat_dir):
-        if name.startswith(prefix) and name.endswith(".md"):
-            stem = name[len(prefix):-3]
-            if stem.isdigit():
-                results.append((int(stem), os.path.join(chat_dir, name)))
-    results.sort(key=lambda t: t[0])
-    return [path for _, path in results]
-
-
-def _next_chat_path(card_id: int) -> str:
-    """Return the path for the next counter file for *card_id*."""
-    existing = _card_chat_paths(card_id)
-    if not existing:
-        n = 1
-    else:
-        last = os.path.basename(existing[-1])          # anki-<id>-N.md
-        n = int(last[len(f"anki-{card_id}-"):-3]) + 1
-    return os.path.join(_gp_chat_dir(), f"anki-{card_id}-{n}.md")
-
-
-def _write_chat_file(filepath: str, card_content: str) -> None:
-    """Write a fresh gp.nvim chat file to *filepath*."""
-    filename = os.path.basename(filepath)
-    cfg = _config()
-    system = cfg.get(
-        "system_prompt",
-        "You are a knowledgeable tutor helping a student understand the Anki card shown below.",
-    )
-
-    # Card content must live inside the 💬: block — gp.nvim only sends
-    # message-block content to the API; anything before the first 💬: is
-    # treated as file metadata and excluded from the conversation.
-    content = (
-        f"# topic: ?\n\n"
-        f"- file: {filename}\n"
-        f"- role: {system}\n\n"
-        f"---\n\n"
-        f"\U0001f4ac:\n"
-        f"**Card content:**\n\n"
-        f"{card_content}\n\n"
-        f"---\n\n"
-        f"My question: "
-    )
-
-    with open(filepath, "w", encoding="utf-8") as fh:
-        fh.write(content)
-
-
-def _ensure_chat_file(card_id: int, card_content: str, force_new: bool) -> str:
-    """
-    Return the path to the chat file to open, creating it if necessary.
-
-    force_new=False: open the highest-numbered anki-<card_id>-N.md, creating
-                     anki-<card_id>-1.md if no file exists yet.
-    force_new=True:  always create anki-<card_id>-(N+1).md.
-    """
-    if force_new:
-        filepath = _next_chat_path(card_id)
-        _write_chat_file(filepath, card_content)
-        return filepath
-
-    existing = _card_chat_paths(card_id)
-    if existing:
-        return existing[-1]   # latest conversation, not rewritten
-
-    filepath = _next_chat_path(card_id)   # creates -1.md
-    _write_chat_file(filepath, card_content)
-    return filepath
-
-
-# ---------------------------------------------------------------------------
-# Neovim communication
-# ---------------------------------------------------------------------------
-
-def _try_remote_open(filepath: str, socket: str) -> bool:
-    """
-    Ask an already-running Neovim (listening on *socket*) to open *filepath*
-    in a new tab via gp.open_buf(), set the agent, then drop into insert mode.
-    Returns True if the command succeeded.
-    """
-    agent = _config().get("agent", "AnkiClaude-Sonnet")
-
-    lua = (
-        f"local gp = require('gp'); "
-        f"gp.open_buf('{filepath}', gp.BufTarget.tabnew, nil, false); "
-        f"gp.cmd.Agent({{args = '{agent}'}}); "
-        f"vim.schedule(function() vim.api.nvim_feedkeys('Go', 'n', true) end)"
-    )
+    url = f"{_open_webui_url()}/api/v1/chats/{chat_id}"
     try:
-        result = subprocess.run(
-            [_editor(), "--server", socket, "--remote-send", f"<C-\\><C-n>:lua {lua}<CR>"],
-            timeout=3,
-            capture_output=True,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return False
+        req = urllib.request.Request(url, headers=_api_headers(), method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            return data.get("title")
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, json.JSONDecodeError):
+        return None
 
 
-def _spawn_nvim_window(filepath: str, socket: str) -> bool:
-    """
-    Open a new terminal window running Neovim with *filepath* pre-loaded and
-    listening on *socket* so future cards can be sent to the same session.
-    """
-    terminal = _terminal()
-    if terminal is None:
-        tooltip(
-            "Could not find a terminal emulator. "
-            "Set \"terminal\" in the addon config."
-        )
-        return False
-
-    agent = _config().get("agent", "AnkiClaude-Sonnet")
-    nvim_args = [
-        _editor(), "--listen", socket,
-        "-c", f"lua require('gp').cmd.Agent({{args = '{agent}'}})",
-        "-c", "lua vim.schedule(function() vim.api.nvim_feedkeys('Go', 'n', true) end)",
-        filepath,
-    ]
-
-    terminal_bin = terminal.split()[0]
-
-    if terminal_bin in ("kitty", "alacritty", "foot", "st", "urxvt", "rxvt", "xterm", "uxterm"):
-        cmd = [terminal, "--"] + nvim_args
-    elif terminal_bin == "wezterm":
-        cmd = [terminal, "start", "--"] + nvim_args
-    elif terminal_bin in ("gnome-terminal", "xfce4-terminal", "mate-terminal"):
-        cmd = [terminal, "--"] + nvim_args
-    elif terminal_bin == "konsole":
-        cmd = [terminal, "-e"] + nvim_args
-    else:
-        cmd = [terminal, "-e"] + nvim_args
-
-    try:
-        subprocess.Popen(
-            cmd,
-            stdin=None,
-            stdout=None,
-            stderr=None,
-            start_new_session=True,
-        )
-        return True
-    except (FileNotFoundError, OSError):
-        return False
-
-
-def _open_in_nvim(filepath: str):
-    socket = _addon_socket()
-
-    if os.path.exists(socket) and _try_remote_open(filepath, socket):
-        tooltip("Card chat opened — switch to your Neovim window!")
-        return
-
-    # Socket file may be stale — remove it so the editor can bind cleanly.
-    if os.path.exists(socket):
-        try:
-            os.remove(socket)
-        except OSError:
-            pass
-
-    if _spawn_nvim_window(filepath, socket):
-        tooltip("Opened Neovim window with card chat — ask away!")
-    else:
-        tooltip(
-            f"Chat file written to:\n{filepath}\n"
-            "Could not open Neovim. Check the \"terminal\" config option."
-        )
+def _open_in_browser(chat_id: str) -> None:
+    """Open the Open WebUI chat page in the user's default browser."""
+    url = f"{_open_webui_url()}/c/{chat_id}"
+    webbrowser.open(url)
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +202,13 @@ def _open_in_nvim(filepath: str):
 # ---------------------------------------------------------------------------
 
 def _extract_card_markdown(card) -> str:
+    """Convert every field of the current card to readable markdown.
+
+    Fields are rendered as **FieldName** followed by the converted content,
+    separated by horizontal rules.  LaTeX in Anki's ``\\( ... \\)`` or
+    ``\\[ ... \\]`` notation passes through unchanged so Open WebUI's
+    KaTeX renderer can display it.
+    """
     note = mw.col.get_note(card.nid)
     model = note.note_type()
 
@@ -302,15 +226,61 @@ def _extract_card_markdown(card) -> str:
 # Main actions
 # ---------------------------------------------------------------------------
 
-def _open_card_chat(force_new: bool):
+def _open_card_chat(force_new: bool) -> None:
+    """Core action: create or reuse an Open WebUI chat for the current card."""
+
+    # --- preflight ---------------------------------------------------------
     if mw.state != "review" or not mw.reviewer.card:
         tooltip("No card is currently being reviewed.")
         return
 
+    if not _api_key():
+        tooltip(
+            "Open WebUI API key not configured.\n"
+            "Set \"open_webui_api_key\" in the addon config."
+        )
+        return
+
     card = mw.reviewer.card
     card_md = _extract_card_markdown(card)
-    filepath = _ensure_chat_file(card.id, card_md, force_new)
-    _open_in_nvim(filepath)
+
+    # --- try to reuse an existing chat ------------------------------------
+    if not force_new:
+        state = _load_state()
+        card_key = str(card.id)
+        entry = state.get(card_key)
+
+        if entry is not None:
+            chat_id = entry.get("chat_id")
+            # Verify the chat still exists on the server
+            if chat_id and _get_chat_title(chat_id) is not None:
+                _open_in_browser(chat_id)
+                tooltip("Reopening your previous chat for this card.")
+                return
+
+            # Chat was deleted on the server — remove stale mapping
+            state.pop(card_key, None)
+            _save_state(state)
+
+    # --- create a new chat ------------------------------------------------
+    chat_id = _create_chat_session(card_md)
+    if chat_id is None:
+        tooltip(
+            "Could not create Open WebUI chat.\n"
+            "Is the instance running and the API key valid?"
+        )
+        return
+
+    # Persist the mapping
+    state = _load_state()
+    state[str(card.id)] = {
+        "chat_id": chat_id,
+        "title": card_md[:80].replace("\n", " "),
+    }
+    _save_state(state)
+
+    _open_in_browser(chat_id)
+    tooltip("Card sent to Hermes Chat – ask away!")
 
 
 def open_card_chat():

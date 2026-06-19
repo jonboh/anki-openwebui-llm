@@ -1,8 +1,5 @@
 {
-  "nvim_socket": "",
-  "terminal": "",
-  "editor": "",
-  "gp_chat_dir": "",
-  "agent": "AnkiClaude-Sonnet",
-  "system_prompt": "You are a knowledgeable tutor helping a student understand the Anki card shown below."
+  "open_webui_url": "https://eva-chat.jonboh.dev",
+  "open_webui_api_key": "",
+  "system_prompt": "You are a knowledgeable tutor helping a student understand the Anki card shown below. Respond with clear explanations, use examples, and render any mathematical expressions in LaTeX notation so they display correctly."
 }

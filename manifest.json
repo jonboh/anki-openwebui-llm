@@ -1,13 +1,13 @@
 {
-  "name": "anki-nvim-llm",
-  "package": "anki-nvim-llm",
+  "name": "anki-openui-llm",
+  "package": "anki-openui-llm",
   "ankiweb_id": "",
   "author": "",
-  "description": "Send the current review card to a gp.nvim chat in Neovim (Ctrl+G).",
-  "homepage": "",
-  "tags": "",
+  "description": "Send the current review card to Open WebUI for LLM explanations with KaTeX rendering (Ctrl+G).",
+  "homepage": "https://github.com/jonboh/anki-openui-llm",
+  "tags": "anki, open-webui, llm, latex, math",
   "min_point_version": 231000,
   "max_point_version": null,
   "branch_index": 0,
-  "conflicts": []
+  "conflicts": ["anki-nvim-llm"]
 }

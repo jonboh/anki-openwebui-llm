@@ -1,78 +1,63 @@
-# anki-nvim-llm configuration
+# anki-openui-llm configuration
 
-## `nvim_socket`
-Path to the Unix socket used for the dedicated Neovim window.
+## `open_webui_url`
 
-Leave empty to use the default: `~/.local/share/anki-nvim-llm/nvim.sock`
+Base URL of your Open WebUI instance.
 
-The addon manages this socket itself — you do not need to start Neovim manually.
-On first use a new terminal window is spawned running:
-```
-<editor> --listen <socket> <chat-file>
-```
-On subsequent card sends the addon detects the socket is alive and sends the
-new chat file to the existing window instead of opening another one.
+Default: `https://eva-chat.jonboh.dev`
+
+Set this to the URL of your Open WebUI server. The addon creates chat
+sessions here and opens your browser to this URL when you press the shortcut.
 
 ---
 
-## `editor`
-The Neovim-compatible binary to use. Leave empty to default to `nvim`.
+## `open_webui_api_key`
 
-Set this if your Neovim is not on `PATH` as `nvim` — for example a nixvim
-wrapper with a different name:
+API key for authenticating with Open WebUI.
 
-```json
-"editor": "mynixvim"
-```
+**Required.** The addon will not work without a valid API key.
 
-Used both for `--server` remote calls to an existing session and for spawning
-a new window.
+Generate one in Open WebUI:
+1. Click your avatar → **Settings** → **Account**
+2. Scroll to **API Keys** → **Generate API Key**
+3. Copy the key and paste it here
 
----
-
-## `terminal`
-Terminal emulator used to open the dedicated Neovim window.
-
-Leave empty to auto-detect from a built-in list (kitty, alacritty, wezterm,
-foot, gnome-terminal, xfce4-terminal, konsole, xterm, …).
-
-Set explicitly if auto-detection picks the wrong one, e.g. `"kitty"`.
-
----
-
-## `gp_chat_dir`
-Directory where gp.nvim stores its chat files.
-
-Leave empty to use the default: `~/.local/share/nvim/gp/chats/`
-
-Must match the `chat_dir` you have configured in gp.nvim.
-
----
-
-## `agent`
-The gp.nvim agent name to activate when opening the chat.
-
-Must exactly match one of the agent `name` values in your gp.nvim config.
-From your nixvim setup the available chat agents are:
-
-- `"AnkiClaude-Sonnet"` (default) — dedicated tutor agent for this plugin
-- `"ChatClaude-Sonnet-4-6"`
-- `"ChatClaude-Opus-4-6"`
-- `"ChatGPT5.4"`
-- `"ChatGPT5.4-mini"`
-
-> **Note:** The `model` / `provider` fields that gp.nvim writes into chat files
-> are metadata only — the active agent controls which model actually responds.
-> This plugin sets the agent explicitly rather than relying on whatever was last
-> active in the session.
+This key is stored in your Anki profile and never sent anywhere except to
+your Open WebUI instance.
 
 ---
 
 ## `system_prompt`
-The role / system message placed at the top of each chat.
+
+The system message injected at the start of every new chat session.
+
+Default:
+```
+You are a knowledgeable tutor helping a student understand
+the Anki card shown below. Respond with clear explanations,
+use examples, and render any mathematical expressions in
+LaTeX notation so they display correctly.
+```
+
+Change this if you want a different tone, language, or role. For example,
+to make responses more concise:
+
+```json
+"system_prompt": "You are a terse tutor. Answer in 1–2 sentences. Use LaTeX for all math."
+```
 
 ---
 
-## Shortcut
+## Shortcuts
 
-`Ctrl+G` while in the reviewer sends the current card to gp.nvim.
+| Shortcut | Action |
+|---|---|
+| `Ctrl+G` | Open (or reuse) the persistent Open WebUI chat for the current card |
+| `Ctrl+Shift+G` | Force-create a fresh chat session for the current card |
+
+On first use a new persistent chat is created via the Open WebUI API.
+Your default browser opens to that chat's URL so you can ask follow-ups
+in the full KaTeX-enabled interface.
+
+The card → chat mapping is saved locally at
+`~/.local/share/anki-openui-llm/chats.json` so it survives Anki restarts.
