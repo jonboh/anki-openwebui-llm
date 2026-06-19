@@ -36,6 +36,18 @@ only holds a path, the secret never enters the Nix store.
 
 ---
 
+## `model`
+
+The Open WebUI model to use when creating chat sessions.
+
+Default: `"default"`
+
+Set this to any model name your Open WebUI instance supports — e.g.,
+`"gpt-4o"`, `"claude-sonnet-4"`, or a custom model. The value is passed
+directly in the chat creation API request.
+
+---
+
 ## `system_prompt`
 
 The system message injected at the start of every new chat session.
