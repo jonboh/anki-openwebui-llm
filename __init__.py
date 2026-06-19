@@ -74,10 +74,11 @@ def _html_to_markdown(raw: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
 
-    # 2. Line-break tags
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"</?(p|div|li|tr)[^>]*>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"</?ul[^>]*>|</?ol[^>]*>", "\n", text, flags=re.IGNORECASE)
+    # 2. Line-break tags — consume trailing whitespace so <br>\n doesn't
+    #    produce double blank lines inside code blocks.
+    text = re.sub(r"<br\s*/?>\s*", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</?(p|div|li|tr)[^>]*>\s*", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</?ul[^>]*>|</?ol[^>]*>\s*", "\n", text, flags=re.IGNORECASE)
 
     # 3. Inline formatting
     text = re.sub(r"<b[^>]*>(.*?)</b>", r"**\1**", text, flags=re.IGNORECASE | re.DOTALL)
@@ -198,7 +199,11 @@ def _create_chat_session(card_content: str) -> str | None:
         "chat": {
             "model": _model(),
             "messages": [
-                {"role": "system", "content": _system_prompt()},
+                {
+                    "role": "system",
+                    "content": _system_prompt(),
+                    "model": _model(),
+                },
                 {
                     "role": "user",
                     "content": (
@@ -206,6 +211,7 @@ def _create_chat_session(card_content: str) -> str | None:
                         "Please help me understand it.\n\n"
                         f"{card_content}"
                     ),
+                    "model": _model(),
                 },
             ],
         },
