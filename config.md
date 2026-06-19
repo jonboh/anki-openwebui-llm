@@ -11,19 +11,24 @@ sessions here and opens your browser to this URL when you press the shortcut.
 
 ---
 
-## `open_webui_api_key`
+## `open_webui_api_key_command`
 
-API key for authenticating with Open WebUI.
+A shell command that prints the Open WebUI API key to stdout.
 
-**Required.** The addon will not work without a valid API key.
+**Required.** The addon will not work without a valid key.
 
-Generate one in Open WebUI:
-1. Click your avatar → **Settings** → **Account**
-2. Scroll to **API Keys** → **Generate API Key**
-3. Copy the key and paste it here
+Example commands:
 
-This key is stored in your Anki profile and never sent anywhere except to
-your Open WebUI instance.
+| Setup | Value |
+|---|---|
+| `pass` | `pass show eva-chat/anki-api-key` |
+| `sops` | `sops -d /run/secrets/anki-openui-key` |
+| Static file (via SOPS) | `cat /run/secrets/anki-openui-api-key` |
+
+The command is run via ``shell=True`` with a 5-second timeout.  The
+first line of stdout (trimmed) is used as the bearer token.  Because
+the secret comes from a command rather than config.json, it never
+enters the Nix store.
 
 ---
 

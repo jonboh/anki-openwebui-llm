@@ -24,6 +24,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import urllib.error
 import urllib.request
 import webbrowser
@@ -110,7 +111,22 @@ def _open_webui_url() -> str:
 
 
 def _api_key() -> str:
-    return _config().get("open_webui_api_key", "")
+    """Retrieve the API key by running the command configured in config.json.
+
+    The command's stdout (trimmed) is used as the key.  This lets you use
+    ``pass``, ``sops -d``, ``cat``, or any script — the secret never lives
+    in a config file or the Nix store.
+    """
+    cmd = _config().get("open_webui_api_key_command", "")
+    if not cmd:
+        return ""
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 def _api_headers() -> dict:
@@ -237,7 +253,7 @@ def _open_card_chat(force_new: bool) -> None:
     if not _api_key():
         tooltip(
             "Open WebUI API key not configured.\n"
-            "Set \"open_webui_api_key\" in the addon config."
+            "Set \"open_webui_api_key_command\" in the addon config."
         )
         return
 

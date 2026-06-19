@@ -1,5 +1,5 @@
 {
   "open_webui_url": "https://eva-chat.jonboh.dev",
-  "open_webui_api_key": "",
+  "open_webui_api_key_command": "pass show eva-chat/anki-api-key",
   "system_prompt": "You are a knowledgeable tutor helping a student understand the Anki card shown below. Respond with clear explanations, use examples, and render any mathematical expressions in LaTeX notation so they display correctly."
 }
