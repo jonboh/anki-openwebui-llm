@@ -24,6 +24,8 @@ import html
 import json
 import os
 import re
+import time
+import uuid
 import urllib.error
 import urllib.request
 import webbrowser
@@ -74,9 +76,7 @@ def _html_to_markdown(raw: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
 
-    # 2. Line-break tags — consume optional trailing newline so <br>\n doesn't
-    #    produce double blank lines, but keep any indentation that follows.
-    text = re.sub(r"<br\s*/?>\r?\n", "\n", text, flags=re.IGNORECASE)
+    # 2. Line-break tags
     text = re.sub(r"</?(p|div|li|tr)[^>]*>\s*", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?ul[^>]*>|</?ol[^>]*>\s*", "\n", text, flags=re.IGNORECASE)
 
@@ -195,25 +195,42 @@ def _create_chat_session(card_content: str) -> str | None:
 
     Returns the Open WebUI chat *id* on success, *None* on failure.
     """
+    model_name = _model()
+    chat_id = str(uuid.uuid4())
+    sys_id = str(uuid.uuid4())
+    user_id = str(uuid.uuid4())
+
     payload = json.dumps({
         "chat": {
-            "model": _model(),
-            "messages": [
-                {
-                    "role": "system",
-                    "content": _system_prompt(),
-                    "model": _model(),
+            "id": chat_id,
+            "title": "Anki card",
+            "models": [model_name],
+            "params": {},
+            "history": {
+                "messages": {
+                    sys_id: {
+                        "id": sys_id,
+                        "parentId": None,
+                        "childrenIds": [user_id],
+                        "role": "system",
+                        "content": _system_prompt(),
+                    },
+                    user_id: {
+                        "id": user_id,
+                        "parentId": sys_id,
+                        "childrenIds": [],
+                        "role": "user",
+                        "content": (
+                            "Here is an Anki card I'm reviewing. "
+                            "Please help me understand it.\n\n"
+                            f"{card_content}"
+                        ),
+                    },
                 },
-                {
-                    "role": "user",
-                    "content": (
-                        "Here is an Anki card I'm reviewing. "
-                        "Please help me understand it.\n\n"
-                        f"{card_content}"
-                    ),
-                    "model": _model(),
-                },
-            ],
+                "currentId": user_id,
+            },
+            "tags": [],
+            "timestamp": int(time.time() * 1000),
         },
     }).encode()
 
