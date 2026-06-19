@@ -151,7 +151,7 @@ def _system_prompt() -> str:
 
 def _model() -> str:
     """Open WebUI model name to use for chat sessions."""
-    return _config().get("model", "default")
+    return _config().get("model", "hermes-agent")
 
 
 def _create_chat_session(card_content: str) -> str | None:
