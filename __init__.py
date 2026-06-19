@@ -39,24 +39,56 @@ from aqt.utils import tooltip
 def _html_to_markdown(raw: str) -> str:
     """Best-effort conversion of Anki card HTML to readable markdown text.
 
-    Preserves **bold**, *italic*, `` code ``, fenced code blocks, and
-    line breaks.  Drops unknown tags and unescapes HTML entities.
+    Preserves **bold**, *italic*, `` code ``, fenced code blocks with
+    their language hint, and line breaks.  Drops unknown tags and
+    unescapes HTML entities.
+
+    Anki cards use highlight.js style ``<pre><code class="language-X">``
+    — the language tag is extracted so Open WebUI can colour the syntax.
     """
     if not raw:
         return ""
 
-    text = re.sub(r"<br\s*/?>", "\n", raw, flags=re.IGNORECASE)
+    text = raw
+
+    # 1. Fenced code blocks first — before the inline <code> rule fires.
+    #    Match <pre><code class="language-XXX"> ... </code></pre>
+    text = re.sub(
+        r"<pre[^>]*>\s*<code[^>]*class=\"language-(\w+)\"[^>]*>(.*?)</code>\s*</pre>",
+        r"\n```\1\n\2\n```\n",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    #    Match <pre><code> ... </code></pre> without language hint
+    text = re.sub(
+        r"<pre[^>]*>\s*<code[^>]*>(.*?)</code>\s*</pre>",
+        r"\n```\n\1\n```\n",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    #    Catch any remaining bare <pre> that wasn't wrapped in <code>
+    text = re.sub(
+        r"<pre[^>]*>(.*?)</pre>",
+        r"\n```\n\1\n```\n",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # 2. Line-break tags
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?(p|div|li|tr)[^>]*>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?ul[^>]*>|</?ol[^>]*>", "\n", text, flags=re.IGNORECASE)
 
+    # 3. Inline formatting
     text = re.sub(r"<b[^>]*>(.*?)</b>", r"**\1**", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<strong[^>]*>(.*?)</strong>", r"**\1**", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<i[^>]*>(.*?)</i>", r"*\1*", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<em[^>]*>(.*?)</em>", r"*\1*", text, flags=re.IGNORECASE | re.DOTALL)
 
+    # 4. Inline code (safe now — fenced blocks were already removed)
     text = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<pre[^>]*>(.*?)</pre>", r"\n```\n\1\n```\n", text, flags=re.IGNORECASE | re.DOTALL)
 
+    # 5. Cleanup: strip remaining HTML, unescape entities, normalise whitespace
     text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
     text = re.sub(r"\n{3,}", "\n\n", text)
