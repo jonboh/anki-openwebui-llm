@@ -11,24 +11,28 @@ sessions here and opens your browser to this URL when you press the shortcut.
 
 ---
 
-## `open_webui_api_key_command`
+## `open_webui_api_key_env`
 
-A shell command that prints the Open WebUI API key to stdout.
+Path to a ``KEY=value`` env file containing ``OPEN_WEBUI_API_KEY=***.
 
-**Required.** The addon will not work without a valid key.
+Leave empty if you don't need API auth.
 
-Example commands:
+The file is parsed at runtime — simple ``KEY=value`` lines, one per
+line.  Typical use with SOPS:
 
-| Setup | Value |
-|---|---|
-| `pass` | `pass show eva-chat/anki-api-key` |
-| `sops` | `sops -d /run/secrets/anki-openui-key` |
-| Static file (via SOPS) | `cat /run/secrets/anki-openui-api-key` |
+```nix
+# In your NixOS module for the addon:
+open_webui_api_key_env = "/run/secrets/anki-openui-env";
+```
 
-The command is run via ``shell=True`` with a 5-second timeout.  The
-first line of stdout (trimmed) is used as the bearer token.  Because
-the secret comes from a command rather than config.json, it never
-enters the Nix store.
+where ``anki-openui-env`` is a SOPS-encrypted dotenv file containing:
+
+```env
+OPEN_WEBUI_API_KEY=sk-...
+```
+
+Because the env file is decrypted by SOPS at deploy time and the config
+only holds a path, the secret never enters the Nix store.
 
 ---
 

@@ -24,7 +24,6 @@ import html
 import json
 import os
 import re
-import subprocess
 import urllib.error
 import urllib.request
 import webbrowser
@@ -46,7 +45,7 @@ def _html_to_markdown(raw: str) -> str:
     if not raw:
         return ""
 
-    text = re.sub(r"<br\s*/>", "\n", raw, flags=re.IGNORECASE)
+    text = re.sub(r"<br\s*/?>", "\n", raw, flags=re.IGNORECASE)
     text = re.sub(r"</?(p|div|li|tr)[^>]*>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?ul[^>]*>|</?ol[^>]*>", "\n", text, flags=re.IGNORECASE)
 
@@ -111,22 +110,25 @@ def _open_webui_url() -> str:
 
 
 def _api_key() -> str:
-    """Retrieve the API key by running the command configured in config.json.
+    """Read the API key from a SOPS-managed env file.
 
-    The command's stdout (trimmed) is used as the key.  This lets you use
-    ``pass``, ``sops -d``, ``cat``, or any script — the secret never lives
-    in a config file or the Nix store.
+    Looks for ``OPEN_WEBUI_API_KEY=value`` in the file pointed to by
+    ``open_webui_api_key_env`` in config.json.  The file is parsed as
+    simple ``KEY=value`` lines (no quoting, no continuation).
     """
-    cmd = _config().get("open_webui_api_key_command", "")
-    if not cmd:
+    env_path = _config().get("open_webui_api_key_env", "")
+    if not env_path:
         return ""
+    path = os.path.expanduser(env_path)
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=5
-        )
-        return result.stdout.strip() if result.returncode == 0 else ""
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
+        with open(path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("OPEN_WEBUI_API_KEY="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
 
 
 def _api_headers() -> dict:
@@ -253,7 +255,7 @@ def _open_card_chat(force_new: bool) -> None:
     if not _api_key():
         tooltip(
             "Open WebUI API key not configured.\n"
-            "Set \"open_webui_api_key_command\" in the addon config."
+            "Set \"open_webui_api_key_env\" in the addon config."
         )
         return
 
