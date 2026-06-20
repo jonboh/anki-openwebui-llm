@@ -77,8 +77,33 @@ def _html_to_markdown(raw: str) -> str:
     )
 
     # 2. Line-break tags
+    text = re.sub(r"<br\s*/?>", "\n\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?(p|div|li|tr)[^>]*>\s*", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</?ul[^>]*>|</?ol[^>]*>\s*", "\n", text, flags=re.IGNORECASE)
+
+    # 2.5 Block math — Anki's MathJax stores display math either as
+    #     <anki-mathjax block="true"> or as literal \[...\] in the field.
+    #     Both need \n\n isolation so Open WebUI renders them as display.
+    text = re.sub(
+        r"<anki-mathjax\s+block\s*=\s*[\"']true[\"'][^>]*>(.*?)</anki-mathjax>",
+        r"\n\n\1\n\n",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    text = re.sub(
+        r'\s*\\\[(.+?)\\\]\s*',
+        lambda m: f'\n\n\\[{m.group(1)}\\]\n\n',
+        text,
+        flags=re.DOTALL,
+    )
+
+    # 2.6 Inline math — just strip tags, keep content as-is
+    text = re.sub(
+        r"<anki-mathjax>(.*?)</anki-mathjax>",
+        r"\1",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
     # 3. Inline formatting
     text = re.sub(r"<b[^>]*>(.*?)</b>", r"**\1**", text, flags=re.IGNORECASE | re.DOTALL)
@@ -187,7 +212,7 @@ def _model() -> str:
     return _config().get("model", "hermes-agent")
 
 
-def _create_chat_session(card_content: str) -> str | None:
+def _create_chat_session(card_content: str, title: str = "Anki card") -> str | None:
     """Create a new persistent chat session on Open WebUI.
 
     The card content is embedded as the first user message so it's visible
@@ -203,7 +228,7 @@ def _create_chat_session(card_content: str) -> str | None:
     payload = json.dumps({
         "chat": {
             "id": chat_id,
-            "title": "Anki card",
+            "title": title,
             "models": [model_name],
             "params": {},
             "history": {
@@ -300,6 +325,31 @@ def _extract_card_markdown(card) -> str:
     return "\n\n---\n\n".join(sections)
 
 
+def _get_card_title(card) -> str:
+    """Produce a short title from the card's first field (typically Front).
+
+    Strips HTML tags so you get clean text like "Adjunction — definition"
+    instead of "Anki card".  Falls back to "Anki card" if the field is
+    empty or the card has no fields.
+    """
+    note = mw.col.get_note(card.nid)
+    model = note.note_type()
+    flds = model.get("flds", [])
+    if not flds:
+        return "Anki card"
+
+    raw = note[flds[0]["name"]]
+    text = re.sub(r"<[^>]+>", "", raw)
+    text = html.unescape(text).strip()
+    if not text:
+        return "Anki card"
+
+    # Truncate to ~80 chars, prefer a clean word boundary at the cut.
+    if len(text) > 80:
+        text = text[:77].rsplit(" ", 1)[0] + "…"
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Main actions
 # ---------------------------------------------------------------------------
@@ -320,6 +370,7 @@ def _open_card_chat(force_new: bool) -> None:
         return
 
     card = mw.reviewer.card
+    card_title = _get_card_title(card)
     card_md = _extract_card_markdown(card)
 
     # --- try to reuse an existing chat ------------------------------------
@@ -341,7 +392,7 @@ def _open_card_chat(force_new: bool) -> None:
             _save_state(state)
 
     # --- create a new chat ------------------------------------------------
-    chat_id = _create_chat_session(card_md)
+    chat_id = _create_chat_session(card_md, card_title)
     if chat_id is None:
         tooltip(
             "Could not create Open WebUI chat.\n"
@@ -353,7 +404,7 @@ def _open_card_chat(force_new: bool) -> None:
     state = _load_state()
     state[str(card.id)] = {
         "chat_id": chat_id,
-        "title": card_md[:80].replace("\n", " "),
+        "title": card_title,
     }
     _save_state(state)
 
